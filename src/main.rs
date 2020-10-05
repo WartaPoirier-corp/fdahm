@@ -164,13 +164,19 @@ async fn publish(token: String, video: (GlobalConfig, Video, PathBuf)) {
     ChannelId(global.channel_id)
         .send_message(client.cache_and_http.http.as_ref(), |m| {
             m.embed(|e| {
-                e.author(|a| a.name(global.name).icon_url(global.pp_url))
+                e.color(0xFF0000)
+                    .author(|a| {
+                        a.name(global.name)
+                            .url("https://github.com/WartaPoirier-corp/fdahm")
+                            .icon_url(global.pp_url)
+                    })
                     .title(video_title)
                     .footer(|f| {
-                        f.text(format!(
-                            "{} vues",
-                            video_views.to_formatted_string(&Locale::fr)
-                        ))
+                        f.icon_url("https://www.youtube.com/s/desktop/b4620429/img/favicon_48.png")
+                            .text(format!(
+                                "{} vues",
+                                video_views.to_formatted_string(&Locale::fr)
+                            ))
                     })
                     .timestamp(chrono::Utc::now().to_rfc3339())
                     .image(url)
