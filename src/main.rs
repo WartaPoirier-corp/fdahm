@@ -11,13 +11,13 @@ use std::path::PathBuf;
 #[derive(Clap)]
 #[clap(author = crate_authors!())]
 enum Args {
-    #[clap(about = "Store a discord token in the OS's keyring")]
+    /// Store a discord token in the OS's keyring
     Login(LoginArgs),
 
-    #[clap(about = "List \"videos\" in the current directory")]
+    /// List "videos" in the current directory
     List(ListArgs),
 
-    #[clap(about = "Publish a \"video\" to Discord and mark it as published")]
+    /// Publish a "video" to Discord and mark it as published
     Publish(PublishArgs),
 }
 
@@ -28,7 +28,8 @@ struct LoginArgs {
 
 #[derive(Clap)]
 struct ListArgs {
-    #[clap(short, long, about = "Include already published \"videos\"")]
+    /// Include already published "videos"
+    #[clap(short, long)]
     all: bool,
 }
 
