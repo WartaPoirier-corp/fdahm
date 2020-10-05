@@ -17,6 +17,9 @@ enum Args {
     /// List "videos" in the current directory
     List(ListArgs),
 
+    /// Create a new video directory with a default `video.toml`
+    New(NewArgs),
+
     /// Publish a "video" to Discord and mark it as published
     Publish(PublishArgs),
 }
@@ -31,6 +34,19 @@ struct ListArgs {
     /// Include already published "videos"
     #[clap(short, long)]
     all: bool,
+}
+
+#[derive(Clap)]
+struct NewArgs {
+    /// Name of the directory
+    slug: String,
+
+    /// Title of the video
+    title: Option<String>,
+
+    /// View count
+    #[clap(short, long)]
+    views: Option<u64>,
 }
 
 #[derive(Clap)]
@@ -49,16 +65,10 @@ struct GlobalConfig {
     pp_url: String,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct Video {
     title: String,
-    views: Option<u64>,
-}
-
-impl Video {
-    fn views(&self) -> u64 {
-        self.views.unwrap_or_else(|| rand::random())
-    }
+    views: u64,
 }
 
 #[tokio::main]
@@ -71,6 +81,19 @@ async fn main() {
             println!("Token successfully saved");
         }
         Args::List(ListArgs { all }) => unimplemented!(),
+        Args::New(NewArgs { slug, title, views }) => {
+            let cd = env::current_dir().unwrap();
+            let dir = cd.join(&*slug);
+
+            std::fs::create_dir(&*dir).unwrap();
+
+            let initial = Video {
+                title: title.unwrap_or(slug),
+                views: views.unwrap_or_default(),
+            };
+
+            std::fs::write(dir.join("video.toml"), toml::to_string(&initial).unwrap()).unwrap();
+        }
         Args::Publish(PublishArgs { name, force }) => {
             let cd = env::current_dir().unwrap();
             let channel: GlobalConfig = toml::from_str(
@@ -145,7 +168,7 @@ async fn publish(token: String, video: (GlobalConfig, Video, PathBuf)) {
         .expect("error creating client");
 
     let (global, video, thumbnail) = video;
-    let video_views = video.views();
+    let video_views = video.views;
     let video_title = video.title;
 
     // Hackiest hack of 2020: I upload the image as a message in a channel (doesn't matter which)
