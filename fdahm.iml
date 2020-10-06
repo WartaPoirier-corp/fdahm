@@ -43,6 +43,7 @@
       <sourceFolder url="file://$MODULE_DIR$/target/debug/build/rand_pcg-57322066f512f2ce/out" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/target/debug/build/rand_chacha-363f8051359c2d08/out" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/target/debug/build/arrayvec-4dbbfd79310af580/out" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/target/debug/build/memchr-2df27e1783317f2a/out" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
