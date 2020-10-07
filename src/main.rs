@@ -1,3 +1,8 @@
+mod fdahm_result;
+mod fdahm_storage;
+
+use crate::fdahm_result::{FdahmError, FdahmResult};
+use crate::fdahm_storage::{FdahmDirectory, GlobalConfig, Video, VideoMeta};
 use clap::{crate_authors, Clap};
 use keyring::Keyring;
 use num_format::{Locale, ToFormattedString};
@@ -7,8 +12,6 @@ use serenity::http::AttachmentType;
 use serenity::model::id::ChannelId;
 use std::env;
 use std::path::PathBuf;
-use std::str::FromStr;
-use toml_edit::value;
 
 #[derive(Clap)]
 #[clap(author = crate_authors!())]
@@ -60,121 +63,85 @@ struct PublishArgs {
     force: bool,
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct GlobalConfig {
-    channel_id: u64,
-    name: String,
-    pp_url: String,
-}
-
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-struct Video {
-    title: String,
-    views: u64,
-
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    published: bool,
-}
-
 #[tokio::main]
 async fn main() {
+    std::process::exit(match main_result().await {
+        Ok(_) => 0,
+        Err(e) => {
+            eprintln!("error: {:?}", e);
+            1
+        }
+    })
+}
+
+async fn main_result() -> FdahmResult<()> {
     let keyring = Keyring::new("fdahm", "");
+
+    let cd = &std::env::current_dir().unwrap();
+    let fdahm = FdahmDirectory::new(cd)?;
 
     match Args::parse() {
         Args::Login(LoginArgs { token }) => {
             keyring.set_password(&*token).expect("cannot set password");
             println!("Token successfully saved");
+            Ok(())
         }
-        Args::List(ListArgs { all }) => unimplemented!(),
+        Args::List(ListArgs { all }) => {
+            let mut videos = fdahm.list_videos()?;
+
+            if !all {
+                videos.retain(|v| !v.meta.published);
+            }
+
+            for video in videos {
+                let opt_strikethrough = if video.meta.published { "\x1b[9m" } else { "" };
+                println!("    {}{}\x1b[0m", opt_strikethrough, video.id)
+            }
+
+            Ok(())
+        }
         Args::New(NewArgs { slug, title, views }) => {
             let cd = env::current_dir().unwrap();
             let dir = cd.join(&*slug);
 
             std::fs::create_dir(&*dir).unwrap();
 
-            let initial = Video {
+            let initial = VideoMeta {
                 title: title.unwrap_or(slug),
                 views: views.unwrap_or_default(),
                 published: false,
             };
 
             std::fs::write(dir.join("video.toml"), toml::to_string(&initial).unwrap()).unwrap();
+
+            Ok(())
         }
         Args::Publish(PublishArgs { name, force }) => {
-            let cd = env::current_dir().unwrap();
-            let channel: GlobalConfig = toml::from_str(
-                &*std::fs::read_to_string(cd.join("channel.toml")).expect("channel.toml not found"),
-            )
-            .expect("malformed channel.toml");
+            let config = fdahm.global_config()?;
+            let video = fdahm.get_video_by_id(name)?;
 
-            let dir = cd.join(name);
-            let thumbnail = dir.join("thumbnail.jpg");
-            let video = read_video(&dir);
-
-            if video.published && !force {
+            if video.meta.published && !force {
                 eprintln!("This video was apparently already published. Use --force to force.");
-                return;
+                return Err(FdahmError::AlreadyPublished);
             }
 
-            publish(keyring.get_password().unwrap(), (channel, video, thumbnail)).await;
+            let thumbnail = fdahm.get_thumbnail(&video)?;
+            publish(
+                keyring.get_password().unwrap(),
+                (config, &video, &thumbnail),
+            )
+            .await?;
 
-            // Publish
-            {
-                let path = dir.join("video.toml");
-                let file = std::fs::read_to_string(&path).expect("video.toml not found");
-                let mut doc = toml_edit::Document::from_str(&*file).unwrap();
-
-                doc.root["published"] = value(true);
-                // doc.root["published_date"] = value(Datetime::OffsetDateTime(Utc::now())) TODO
-
-                std::fs::write(&path, doc.to_string()).expect("Couldn't write updated video.toml");
-            }
+            fdahm.mark_published(&video)?;
 
             println!("Publication successful");
+
+            Ok(())
         }
     }
 }
 
-fn read_video(path: &PathBuf) -> Video {
-    toml::from_str(
-        &*std::fs::read_to_string(path.join("video.toml")).expect("video.toml not found"),
-    )
-    .expect("malformed video.toml")
-}
-
-/*fn list() -> std::io::Result<Vec<(Video, bool)>> {
-    use std::fs::*;
-
-    let cd = env::current_dir()?;
-
-    let default: PartialVideo = read_to_string(cd.join("default.toml"))
-        .map(|content| toml::from_str(&*content).expect("Malformed default.toml"))
-        .unwrap_or_default();
-
-    let dirs = read_dir(cd)?
-        .map(|e| e.unwrap())
-        .filter(|e| e.metadata().unwrap().is_dir())
-        .map(|e| e.path());
-
-    let videos = dirs
-        .map(|d| {
-            let video = read_to_string(d.join("video.toml")).expect("Cannot read video.toml");
-            let video: PartialVideo = toml::from_str(&*video).expect("Malformed video.toml");
-
-            let video = video
-                .inherit(&default)
-                .expect("Missing properties after merging default.toml and video.toml");
-
-            let published = d.join(".published").exists();
-
-            (video, published)
-        })
-        .collect();
-
-    Ok(videos)
-}*/
-
-async fn publish(token: String, video: (GlobalConfig, Video, PathBuf)) {
+async fn publish(token: String, video: (GlobalConfig, &Video, &PathBuf)) -> FdahmResult<()> {
     let client = ClientBuilder::new(token)
         // .event_handler(Events(sender))
         .framework(StandardFramework::new())
@@ -182,8 +149,8 @@ async fn publish(token: String, video: (GlobalConfig, Video, PathBuf)) {
         .expect("error creating client");
 
     let (global, video, thumbnail) = video;
-    let video_views = video.views;
-    let video_title = video.title;
+    let video_views = video.meta.views;
+    let video_title = &video.meta.title;
 
     // Hackiest hack of 2020: I upload the image as a message in a channel (doesn't matter which)
     // and get its URL, to use Discord as an image hosting service.
@@ -191,7 +158,7 @@ async fn publish(token: String, video: (GlobalConfig, Video, PathBuf)) {
     let url = {
         let mut image_message = ChannelId(762636492421857300)
             .send_message(client.cache_and_http.http.as_ref(), |m| {
-                m.add_file(AttachmentType::Path(thumbnail.as_ref()))
+                m.add_file(AttachmentType::Path(thumbnail))
             })
             .await
             .unwrap();
@@ -222,4 +189,6 @@ async fn publish(token: String, video: (GlobalConfig, Video, PathBuf)) {
         })
         .await
         .unwrap();
+
+    Ok(())
 }
